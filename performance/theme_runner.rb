@@ -31,6 +31,8 @@ class ThemeRunner
 
       [File.read(test), (File.file?(theme_path) ? File.read(theme_path) : nil), test]
     end.compact
+
+    compile_tests
   end
 
   def compile
@@ -71,8 +73,26 @@ class ThemeRunner
 
   # the following 3 methods are for when we want to benchmark just the 'render'
 
-  # compile_tests should be called before the benchmark is run, and benchmark_render
-  # should be called to to benchmark just the render
+  # compile_tests is called in `initialize` to compile,
+  # render is called to benchmark just the render
+
+  def render
+    @compiled_tests.each do |test|
+      # layout could be nil
+      tmpl = test[:tmpl]
+      assigns = test[:assigns]
+      layout = test[:layout]
+
+      if layout
+        assigns['content_for_layout'] = tmpl.render!(assigns)
+        layout.render!(assigns)
+      else
+        tmpl.render!(assigns)
+      end
+    end
+  end
+
+  private
 
   def compile_tests
     # Dup assigns because will make some changes to them
@@ -98,25 +118,9 @@ class ThemeRunner
     parsed_layout = tmpl.parse(layout)
 
     if layout
-      { 'tmpl' => parsed_template, 'assigns' => assigns, 'layout' => parsed_layout }
+      { tmpl: parsed_template, assigns: assigns, layout: parsed_layout }
     else
-      { 'tmpl' => parsed_template, 'assigns' => assigns }
-    end
-  end
-
-  def benchmark_render
-    @compiled_tests.each do |test|
-      # layout could be nil
-      tmpl = test['tmpl']
-      assigns = test['assigns']
-      layout = test['layout']
-
-      if layout
-        assigns['content_for_layout'] = tmpl.render!(assigns)
-        tmpl.render!(assigns)
-      else
-        tmpl.render!(assigns)
-      end
+      { tmpl: parsed_template, assigns: assigns }
     end
   end
 end

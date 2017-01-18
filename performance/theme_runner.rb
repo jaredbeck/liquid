@@ -32,7 +32,7 @@ class ThemeRunner
       [File.read(test), (File.file?(theme_path) ? File.read(theme_path) : nil), test]
     end.compact
 
-    compile_tests
+    compile_all_tests
   end
 
   def compile
@@ -45,40 +45,31 @@ class ThemeRunner
   end
 
   def run
-    # Dup assigns because will make some changes to them
-    assigns = Database.tables.dup
-
-    @tests.each do |liquid, layout, template_name|
-      # Compute page_tempalte outside of profiler run, uninteresting to profiler
-      page_template = File.basename(template_name, File.extname(template_name))
+    for_each_test do |liquid, layout, assigns, page_template, template_name|
       compile_and_render(liquid, layout, assigns, page_template, template_name)
     end
   end
 
   def compile_and_render(template, layout, assigns, page_template, template_file)
-    tmpl = Liquid::Template.new
-    tmpl.assigns['page_title'] = 'Page title'
-    tmpl.assigns['template'] = page_template
-    tmpl.registers[:file_system] = ThemeRunner::FileSystem.new(File.dirname(template_file))
+    compile_test(page_template, template_file) do |tmpl|
+      content_for_layout = tmpl.parse(template).render!(assigns)
 
-    content_for_layout = tmpl.parse(template).render!(assigns)
-
-    if layout
-      assigns['content_for_layout'] = content_for_layout
-      tmpl.parse(layout).render!(assigns)
-    else
-      content_for_layout
+      if layout
+        assigns['content_for_layout'] = content_for_layout
+        tmpl.parse(layout).render!(assigns)
+      else
+        content_for_layout
+      end
     end
   end
 
   # the following 3 methods are for when we want to benchmark just the 'render'
 
-  # compile_tests is called in `initialize` to compile,
+  # compile_all_tests is called in `initialize` to compile,
   # render is called to benchmark just the render
 
   def render
     @compiled_tests.each do |test|
-      # layout could be nil
       tmpl = test[:tmpl]
       assigns = test[:assigns]
       layout = test[:layout]
@@ -94,33 +85,45 @@ class ThemeRunner
 
   private
 
-  def compile_tests
-    # Dup assigns because will make some changes to them
-    assigns = Database.tables.dup
-
+  def compile_all_tests
     @compiled_tests = []
-    @tests.each do |liquid, layout, template_name|
-      # Compute page_tempalte outside of profiler run, uninteresting to profiler
-      page_template = File.basename(template_name, File.extname(template_name))
+    for_each_test do |liquid, layout, assigns, page_template, template_name|
       @compiled_tests << compile_and_save(liquid, layout, assigns, page_template, template_name)
     end
   end
 
   def compile_and_save(template, layout, assigns, page_template, template_file)
+    compile_test(page_template, template_file) do |tmpl|
+      parsed_template = tmpl.parse(template).dup
+      parsed_layout = tmpl.parse(layout)
+
+      if layout
+        { tmpl: parsed_template, assigns: assigns, layout: parsed_layout }
+      else
+        { tmpl: parsed_template, assigns: assigns }
+      end
+    end
+  end
+
+  # utility method with similar functionality needed in `compile_all_tests` and `run`
+  def for_each_test
+    # Dup assigns because will make some changes to them
+    assigns = Database.tables.dup
+
+    @tests.each do |liquid, layout, template_name|
+      # Compute page_template outside of profiler run, uninteresting to profiler
+      page_template = File.basename(template_name, File.extname(template_name))
+      yield(liquid, layout, assigns, page_template, template_name)
+    end
+  end
+
+  # utility method with similar functionality needed in `compile_and_render` and `compile_and_save`
+  def compile_test(page_template, template_file)
     tmpl = Liquid::Template.new
     tmpl.assigns['page_title'] = 'Page title'
     tmpl.assigns['template'] = page_template
     tmpl.registers[:file_system] = ThemeRunner::FileSystem.new(File.dirname(template_file))
 
-    # in order to follow the order of parse template, render, parse layout, render
-    parsed_template = tmpl.parse(template).dup
-    tmpl.render!(assigns)
-    parsed_layout = tmpl.parse(layout)
-
-    if layout
-      { tmpl: parsed_template, assigns: assigns, layout: parsed_layout }
-    else
-      { tmpl: parsed_template, assigns: assigns }
-    end
+    yield(tmpl)
   end
 end
